@@ -88,3 +88,47 @@ def train_test_val_split(dataset, percent, train_percent, val_percent, test_perc
     test_size = tf.math.rint(tf.math.multiply(size, tf.cast(test_percent, tf.float32)))
     
     return tf.cast(train_size, tf.int64), tf.cast(val_size, tf.int64), tf.cast(test_size, tf.int64)
+
+
+
+def get_mel_spectrogram(senal, fs=48000, n_fft=1024, hop_length=256, window='hann', n_mels=128, verbose=False):
+    '''
+    Esta función calcula el espectrograma de la señal de entrada en escala MEL de acuerdo a los argumentos dados. 
+    
+    Parámetros:
+    - senal: Señal de entrada
+    - fs: Frecuencia de Muestreo
+    - n_ftt: Nro. de muestras para cada ventana donde se va a realizar la stft. Recomendación: Potencia de dos.
+    - hop_length: Nro. muestras que se va a mover la ventana en cada desplazamiento (hop: salto)
+    - window: Tipo de ventana.
+    - n_mels: Número de filtros de mel
+    - verbose: Activar o desactivar el debugging de la STFT.
+    Returns:
+    - log_mel_spec:  Magnitud del espectograma de la señal de entrada mapeado a escala MEL.
+    '''
+    # Se calcula la magnitud del espectograma de la señal de entrada, y lo mapea a escala MEL.
+    mel_spec = lb.feature.melspectrogram(y=tensor_to_nparray(senal),
+                                         sr=fs,
+                                         n_fft=n_fft,
+                                         hop_length=hop_length,
+                                         window=window,
+                                         n_mels=n_mels)
+    # Se convierte la escala a decibeles
+    log_mel_spec = lb.power_to_db(mel_spec, ref=np.max)
+    
+    # Se aumenta la dimensión para que el algoritmo lo tome como imagen de 1 canal
+    log_mel_spec = tf.expand_dims(log_mel_spec, axis=-1);
+
+    # Conversión de los arrays a tensores de TensorFlow
+    log_mel_spec = tf.convert_to_tensor(log_mel_spec, dtype=tf.float32)
+
+    # Datos de la transformada
+    if verbose == True:
+        print(f'Nro. de muestras dentro de cada ventana: {n_fft}')
+        print(f'Solapamiento entre ventanas: {(hop_length/n_fft)*100} %')
+        print(f'Duración de cada ventana: {(n_fft/fs) * 1000:.3f} ms')
+        print(f'Dimensiones de la Mátriz resultante: {log_mel_spec.shape}')
+        print(f'Resolución en frecuencia del espectograma: {log_mel_spec.shape[0]} divisiones.')
+        print(f'Resolución en tiempo / Número de ventanas a lo largo de la serie de tiempo: {log_mel_spec.shape[1]} ventanas.')
+            
+    return log_mel_spec
