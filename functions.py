@@ -4,9 +4,13 @@ import librosa as lb
 import matplotlib.pyplot as plt
 from librosa.display import specshow
 from tensorflow.python.keras import backend
+import tensorflow_io as tfio
 
+
+TOP_DB = 80.0
 # Estandarización de duración
 MAX_DUR = 6
+
 
 def pad_trunc_audio(audio, sampling_freq, max_dur):
     '''
@@ -315,3 +319,264 @@ def plot_spectrogram_plt(senal, width=5, height=5, show_axis=True, title='Espect
 
 def rmse(y_true, y_pred):
     return backend.sqrt(backend.mean(backend.square(y_pred - y_true), axis=-1))
+
+
+def plot_history(history):
+    loss_list = [s for s in history.history.keys() if 'loss' in s and 'val' not in s]
+    val_loss_list = [s for s in history.history.keys() if 'loss' in s and 'val' in s]
+    
+    epochs = range(1,len(history.history[loss_list[0]]) + 1)
+    
+    # Grafica de Función de Perdida vs Epocas
+    fig, ax=plt.subplots(1,1,figsize=(5,5))
+    fig.patch.set_facecolor('white')
+
+    for l in loss_list:
+        ax.plot(epochs, history.history[l], 'cornflowerblue', label='Training loss')
+    for l in val_loss_list:
+        ax.plot(epochs, history.history[l], 'orange', label='Validation loss')
+    
+    ax.set_xlabel('Epochs')
+    ax.set_ylabel('Loss')
+    plt.legend(loc=1)
+    plt.tick_params(labelsize=12)
+    plt.tight_layout()
+    plt.show;
+
+
+
+def load_mono_wav(path, sampling_freq, resampling_freq=False, verbose=False):
+    # Load encoded wav file
+    file_contents = tf.io.read_file(path)
+    # Decode wav (tensors by channels) 
+    audio, _ = tf.audio.decode_wav(file_contents, desired_channels=1)
+    # Removes trailing axis
+    audio = tf.squeeze(audio, axis=-1)
+    
+    if resampling_freq != False:
+        audio = tfio.audio.resample(audio, rate_in=tf.get_static_value(sampling_freq), rate_out=tf.get_static_value(resampling_freq))
+        sampling_freq = resampling_freq
+    
+    if verbose == True:
+        print(f'Frecuencia de muestreo: {sampling_freq} Hz')
+    
+    return audio, sampling_freq
+
+
+def log10(x):
+    numerator = tf.math.log(x)
+    denominator = tf.math.log(tf.constant(10.0, dtype=numerator.dtype))
+    log10x = numerator / denominator
+    return log10x
+
+
+def magphase(D):
+    mag = tf.math.abs(D)
+    D_real = tf.math.real(D)
+    D_imag = tf.math.imag(D)
+    
+    phase = tf.where(tf.equal(mag, 0),
+                     # If mag == 0:
+                     tf.dtypes.complex(tf.cast(1, tf.float32),
+                                       tf.cast(0, tf.float32)),
+                     # else:
+                     tf.dtypes.complex((D_real / mag),
+                                       (D_imag / mag))
+                    )
+    
+    mag = tf.cast(mag, tf.float32)
+    phase = tf.cast(phase, tf.complex64)
+    
+    return mag, phase
+
+
+def amplitude_to_db_numpy(S, top_db=TOP_DB, amin=1e-10):
+    magnitude1 = np.abs(S)
+    ref_value1 = np.max(magnitude1)
+    
+    power1 = np.square(magnitude1)
+    ref_value1 = ref_value1**2
+    amin1 = amin**2
+    
+    S_db1 = 10.0 * np.log10( np.maximum(amin1, power1) )
+    S_db1 -= 10.0 * np.log10( np.maximum(amin1, ref_value1) )
+    S_db1 = np.maximum(S_db1, S_db1.max() - top_db)
+    return S_db1
+
+
+def amplitude_to_db(S, top_db=TOP_DB, amin=1e-10):    
+    # Si la entrada dada por el usuario es compleja, se toma el valor absoluto
+    # y se descarta la parte imaginaria
+    magnitude = tf.math.abs(S)
+    # Se toma el valor de magnitud maximo como referencia
+    ref_value = tf.reduce_max(magnitude)
+    
+    # Se convierte el espectrograma a Potencia
+    power = tf.math.pow(magnitude, 2)
+    ref_value = tf.math.pow(ref_value, 2)
+    amin = tf.math.pow(amin, 2)
+    
+    # Se convierte a escala logaritmica (Decibeles)
+    S_db = 10.0 * log10( tf.math.maximum(amin, power) )
+    S_db -= 10.0 * log10( tf.math.maximum(amin, ref_value) )
+    S_db = tf.math.maximum(S_db, tf.reduce_max(S_db) - top_db)
+
+    return S_db
+
+
+def get_stft_log_magnitude_librosa(audio, n_fft, hop_length, win_length, window, sampling_freq, verbose=False):
+    '''
+    Esta función calcula la STFT en escala logaritmica de la señal de entrada de acuerdo a los argumentos dados.
+    
+    Inputs:
+    - senal: Señal de entrada
+    - fs: Frecuencia de Muestreo
+    - n_ftt: Nro. de muestras para cada ventana donde se va a realizar la stft. Recomendación: Potencia de dos.
+    - hop_length: Nro. muestras que se va a mover la ventana en cada desplazamiento (hop: salto)
+    - window: Tipo de ventana.
+    - verbose: Activar o desactivar el debugging de la STFT.
+    
+    Outputs:
+    - stft_mag_db: Magnitud en escala logaritmica de la Transformada de Fourier.
+    - stft_phase: Fase de la Transformada de Fourier.
+    '''
+    sampling_freq = tf.get_static_value(sampling_freq)
+
+    # Se calcula la Transformada de Fourier de Tiempo Corto
+    stft = lb.stft(tensor_to_nparray(audio),
+                   n_fft=n_fft,
+                   hop_length=hop_length,
+                   win_length=win_length,
+                   window=window,
+                   center=True)
+
+    # Se separa el espectrograma D en sus componentes de magnitud S y fase P, tal que D=S*P
+    stft_mag_lineal, stft_phase = lb.magphase(stft)
+
+    # Se convierte el espectrograma de amplitud lineal a un espectrograma escalado en dB.
+    stft_mag_db = lb.amplitude_to_db(stft_mag_lineal, ref=np.max)
+
+    # Conversión de los arrays a tensores de TensorFlow
+    stft_mag_db = tf.convert_to_tensor(stft_mag_db, dtype=tf.float32)
+    stft_phase = tf.convert_to_tensor(stft_phase, dtype=tf.complex64)
+    
+    # Se aumenta la dimensión para que el algoritmo lo tome como imagen de 1 canal
+    stft_mag_db = tf.expand_dims(stft_mag_db, -1)
+    stft_phase = tf.expand_dims(stft_phase, -1)
+        
+    # Datos de la transformada
+    if verbose == True:
+        print(f'Nro. de muestras dentro de cada ventana: {n_fft}')
+        print(f'Solapamiento entre ventanas: {(hop_length/n_fft)*100} %')
+        print(f'Duración de cada ventana: {(n_fft/sampling_freq) * 1000:.3f} ms')
+        print(f'Dimensiones de la Mátriz STFT resultante: {stft.shape}')
+        print(f'Resolución en frecuencia del espectograma: {stft.shape[0]} divisiones.')
+        print(f'Resolución en tiempo / Número de ventanas a lo largo de la serie de tiempo: {stft.shape[1]} ventanas.')
+            
+    return stft_mag_db, stft_phase
+
+
+def get_stft_log_magnitude(audio, n_fft, hop_length, win_length, window, sampling_freq, verbose=False):
+    '''
+    Esta función calcula la STFT en escala logaritmica de la señal de entrada de acuerdo a los argumentos dados.
+    
+    Inputs:
+    - senal: Señal de entrada
+    - fs: Frecuencia de Muestreo
+    - n_ftt: Nro. de muestras para cada ventana donde se va a realizar la stft. Recomendación: Potencia de dos.
+    - hop_length: Nro. muestras que se va a mover la ventana en cada desplazamiento (hop: salto)
+    - window: Tipo de ventana.
+    - verbose: Activar o desactivar el debugging de la STFT.
+    
+    Outputs:
+    - stft_mag_db: Magnitud en escala logaritmica de la Transformada de Fourier.
+    - stft_phase: Fase de la Transformada de Fourier.
+    '''    
+    if window == 'hann':
+        window = tf.signal.hann_window
+        
+    stft = tf.signal.stft(audio,
+                          fft_length=n_fft,
+                          frame_step=hop_length,
+                          frame_length=win_length,
+                          window_fn=window,
+                          pad_end=True,
+                          )
+    
+    # Se separa el espectrograma D en sus componentes de magnitud S y fase P, tal que D=S*P
+    stft_mag_lineal, stft_phase = magphase(stft)
+    
+    # Se convierte el espectrograma de amplitud lineal a un espectrograma escalado en dB.
+    stft_mag_db = amplitude_to_db(stft_mag_lineal)
+    
+    # Se aumenta la dimensión para que el algoritmo lo tome como imagen de 1 canal
+    stft_mag_db = tf.expand_dims(stft_mag_db, -1)
+    stft_phase = tf.expand_dims(stft_phase, -1)
+
+    stft_mag_db = tf.image.transpose(stft_mag_db)
+    stft_phase = tf.image.transpose(stft_phase)
+        
+    # Datos de la transformada
+    if verbose == True:
+        print(f'Nro. de muestras dentro de cada ventana: {n_fft}')
+        print(f'Solapamiento entre ventanas: {(hop_length/n_fft)*100} %')
+        print(f'Duración de cada ventana: {(n_fft/sampling_freq) * 1000:.3f} ms')
+        print(f'Dimensiones de la Mátriz STFT resultante: {stft.shape}')
+        print(f'Resolución en frecuencia del espectograma: {stft.shape[0]} divisiones.')
+        print(f'Resolución en tiempo / Número de ventanas a lo largo de la serie de tiempo: {stft.shape[1]} ventanas.')
+            
+    return stft_mag_db, stft_phase
+
+
+def db_to_amplitude(S_db, ref=1.0):
+    S_linear = tf.math.pow(ref, 2) * tf.math.pow(10.0, 0.1 * S_db)
+    S_linear = tf.math.pow(S_linear, 0.5)
+
+    return S_linear
+
+
+def get_istft_log_magnitude(stft_mag_db, stft_phase, n_fft, hop_length, win_length, window, sampling_freq, verbose=False):
+    '''
+    Esta función calcula la ISTFT del espectrograma de entrada de acuerdo a los argumentos dados.
+    
+    Inputs:
+    - stft_mag_db: Magnitud en escala de decibeles del espectrograma de entrada
+    - stft_phase: Fase del espectrograma de entrada
+    - n_ftt: Nro. de muestras para cada ventana donde se va a realizar la stft. Recomendación: Potencia de dos.
+    - hop_length: Nro. muestras que se va a mover la ventana en cada desplazamiento (hop: salto)
+    - window: Tipo de ventana.
+    - verbose: Activar o desactivar el debugging de la STFT.
+    Outputs:
+    - istft: Transformada Inversa de Fourier de Tiempo Corto de la señal.
+    '''
+    # Remueve la dimension correspondiente al numero de canales de la imagen
+    stft_mag_db = tf.squeeze(stft_mag_db)
+    stft_phase = tf.squeeze(stft_phase)
+
+    # Se convierte el espectrograma escalado en dB a un espectrograma de amplitud lineal
+    stft_mag_lineal = db_to_amplitude(stft_mag_db, ref=1.0)    
+    stft_mag_lineal = tf.cast(stft_mag_lineal, tf.complex64)
+    
+    # Se une el espectrograma D a partir de sus componentes de magnitud S y fase P, tal que D=S*P
+    audio_reverse_stft = tf.math.multiply(stft_mag_lineal, stft_phase)
+    
+
+    # Se calcula la Transformada Inversa de Fourier de Tiempo Corto
+    istft = lb.istft(tensor_to_nparray(audio_reverse_stft),
+                     n_fft=n_fft,
+                     hop_length=hop_length,
+                     win_length=win_length,
+                     window=window,
+                     center=True)
+    
+    # Conversión de los arrays a tensores de TensorFlow
+    istft = tf.convert_to_tensor(istft, dtype=tf.float32)
+
+    # Datos de la transformada
+    if verbose == True:
+        print(f'Nro. de muestras dentro de cada ventana: {n_fft}')
+        print(f'Solapamiento entre ventanas: {(hop_length/n_fft)*100} %')
+        print(f'Dimensiones de la Mátriz ISTFT resultante: {istft.shape}')
+        print(f'Muestras en el audio: {istft.shape[0]}.')
+            
+    return istft
