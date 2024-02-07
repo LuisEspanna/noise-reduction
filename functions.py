@@ -8,6 +8,7 @@ import tensorflow_io as tfio
 import IPython.display as ipd
 import random
 from tensorflow.python.keras.layers import Input, Conv2D, LeakyReLU, MaxPooling2D, Dropout, concatenate, UpSampling2D, Conv2DTranspose
+from tensorflow.python.keras.models import Model
 
 
 BatchNormalization = tf.nn.batch_normalization
@@ -805,3 +806,69 @@ def UNETdecoder(prev_layer_input, skip_layer_input, n_filters, kernel_size, acti
         conv = Dropout(dropout)(conv)
         
     return conv
+
+
+def UNETmodel(input_size, n_filters, kernel_size, activation_layer, output_activation_layer, kernel_init, batch_normalization, dropout, n_filters_out, optimizer, loss):
+    """
+    Combinar los bloques codificador y decodificador según el documento de investigación de U-Net
+    Retorna el modelo como salida 
+    Parámetros:
+    - input_size: Tamaño de la señal de Entrada
+    - n_filters: Número de Filtros
+    - kernel_size: Tamaño del Kernel
+    - activation_layer: Capa de Activación
+    - kernel_init: Inicialización de Kernel
+    - n_filters_out: Número de filtros en convolución de salida.
+    - optimizer: Optimizador
+    - loss: Función de perdida
+    Returns:
+    - model: Modelo
+    """
+
+    # Reinicia los estados generados por Keras y TensorFlow para generar una sesión limpia
+    tf.keras.backend.clear_session()
+    
+    # ENTRADA
+    # El tamaño de entrada representa el tamaño de 1 imagen (el tamaño utilizado para el preprocesamiento) 
+    inputs = Input(input_size)
+    
+    # CODIFICADOR: Contracción.
+    # El codificador incluye múltiples minibloques convolucionales con diferentes parámetros de maxpooling, dropout y filtro
+    # Obsérvese que los filtros van aumentando a medida que nos adentramos en la red, lo que incrementa el número de canales de la imagen
+    encoderBlock1 = UNETencoder(inputs, n_filters*1, kernel_size, activation_layer, kernel_init, batch_normalization, dropout=dropout/2, max_pooling=True)
+    encoderBlock2 = UNETencoder(encoderBlock1[0], n_filters*2, kernel_size, activation_layer, kernel_init, batch_normalization, dropout=dropout, max_pooling=True)
+    encoderBlock3 = UNETencoder(encoderBlock2[0], n_filters*4, kernel_size, activation_layer, kernel_init, batch_normalization, dropout=dropout, max_pooling=True)
+    encoderBlock4 = UNETencoder(encoderBlock3[0], n_filters*8, kernel_size, activation_layer, kernel_init, batch_normalization, dropout=dropout, max_pooling=True)
+    
+    # PUENTE: Representación del espacio latente o Cuello de Botella.
+    bottleneck = UNETencoder(encoderBlock4[0], n_filters*16, kernel_size, activation_layer, kernel_init, batch_normalization, dropout=dropout, max_pooling=False)
+    
+    # DECODIFICADOR: Expansión.
+    # El decodificador incluye múltiples minibloques con un número decreciente de filtros
+    # Observa que las conexiones de salto del codificador se dan como entrada al decodificador
+    # Hay que tener en cuenta que la segunda salida del bloque codificador es una conexión de salto, por lo que se utiliza encoderBlockn[1].
+    decoderBlock1 = UNETdecoder(bottleneck[0], encoderBlock4[1], n_filters*8, kernel_size, activation_layer, kernel_init, dropout=dropout)
+    decoderBlock2 = UNETdecoder(decoderBlock1, encoderBlock3[1], n_filters*4, kernel_size, activation_layer, kernel_init, dropout=dropout)
+    decoderBlock3 = UNETdecoder(decoderBlock2, encoderBlock2[1], n_filters*2, kernel_size, activation_layer, kernel_init, dropout=dropout)
+    decoderBlock4 = UNETdecoder(decoderBlock3, encoderBlock1[1], n_filters*1, kernel_size, activation_layer, kernel_init, dropout=dropout)
+    
+    # SALIDA
+    # Capa de convolución para obtener la imagen al tamaño deseado. 
+    # (En problemas de segmentación: Número de filtros de salida = Número de clases a segmentar en la imagen.)
+    # (En problemas de denoising: Número de filtros de salida = Número de canales de la imagen procesada.)
+    conv = Conv2D(n_filters_out,
+                  kernel_size, # 1
+                  activation=output_activation_layer,
+                  padding='same' # Para asegurar que el tamaño de la imagen no disminuya.
+                  )(decoderBlock4)
+    
+    # GENERACIÓN DEL MODELO
+    # Creación de Modelo
+    model = Model(inputs=inputs, outputs=conv, name="U-Net")
+    
+    # Compilador
+    model.compile(optimizer=optimizer,
+                  loss=loss,
+                  metrics=['mae','mse'])
+
+    return model
