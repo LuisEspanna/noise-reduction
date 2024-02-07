@@ -1,6 +1,10 @@
 import tensorflow as tf
 import numpy as np
 import librosa as lb
+import matplotlib.pyplot as plt
+
+# Estandarización de duración
+MAX_DUR = 6
 
 def pad_trunc_audio(audio, sampling_freq, max_dur):
     '''
@@ -132,3 +136,42 @@ def get_mel_spectrogram(senal, fs=48000, n_fft=1024, hop_length=256, window='han
         print(f'Resolución en tiempo / Número de ventanas a lo largo de la serie de tiempo: {log_mel_spec.shape[1]} ventanas.')
             
     return log_mel_spec
+
+
+def plot_time_audio(audio, fs, width=13, height=4, title='Grafica del audio en el dominio del Tiempo', save_plot=False):
+    '''
+    Esta función grafica la señal de audio en el tiempo, de acuerdo
+    a la frecuencia de muestreo dada.
+    
+    Parámetros:
+    - audio: Señal de audio a graficar.
+    - fs: Frecuencia de muestreo del audio.
+    - width: Ancho de la Figura.
+    - height: Altura de la Figura.
+    - title: Titulo de la Figura.
+    - save_plot: Guardar Figura.
+    Returns:
+    - N/A
+    '''
+    audio_samples = len(audio)
+    t = np.arange(0, audio_samples/fs, 1/fs)
+    
+    if len(t) > audio_samples:
+        t = t[:-1]
+
+    # Plotear Figura
+    fig, ax = plt.subplots(1, 1, figsize=(width, height))
+    fig.patch.set_facecolor('white')
+    ax.plot(t, audio);
+    ax.set_title(title)
+    ax.set_xlabel('Tiempo [s]')
+    ax.set_xlim([0, MAX_DUR])
+    ax.set_ylabel('Amplitud')
+    ax.grid(True)
+    plt.tight_layout()
+    
+    # Guardar Figura
+    if save_plot == True:
+        fmt = 'png'
+        file_name = f'{title}.{fmt}'
+        plt.savefig(file_name, bbox_inches='tight', pad_inches = 0, dpi=300)
