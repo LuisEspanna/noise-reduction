@@ -5,11 +5,27 @@ import matplotlib.pyplot as plt
 from librosa.display import specshow
 from tensorflow.python.keras import backend
 import tensorflow_io as tfio
-
+import IPython.display as ipd
 
 TOP_DB = 80.0
 # Estandarización de duración
 MAX_DUR = 6
+# Normalización del espectrograma
+NORMALIZE = True
+# Remuestreo de frecuencia
+RESAMPLING_FREQ = 22050
+# Estandarización de duración
+MAX_DUR = 6
+SAMPLES = MAX_DUR * RESAMPLING_FREQ
+N_FFT = 2**10 # Muestras en cada ventana 2**10=1024
+INPUT_WIDTH = int(1+(N_FFT/2))
+OVERLAPPING = 1/4 # Traslape entre ventanas
+HOP_LENGTH = int(np.ceil(N_FFT*OVERLAPPING)) # Número de muestras de audio entre ventanas STFT adyacentes.
+INPUT_HEIGHT = int( np.ceil( SAMPLES / HOP_LENGTH ) )
+RESCALE_WIDTH = int(2**8) # 2**8=256. 2**9=512
+RESCALE_HEIGHT = RESCALE_WIDTH
+CHANNELS = 1
+TF_ENABLE_ONEDNN_OPTS=0
 
 
 def pad_trunc_audio(audio, sampling_freq, max_dur):
@@ -580,3 +596,81 @@ def get_istft_log_magnitude(stft_mag_db, stft_phase, n_fft, hop_length, win_leng
         print(f'Muestras en el audio: {istft.shape[0]}.')
             
     return istft
+
+
+def listen(audio, sampling_freq):
+    sampling_freq = tf.get_static_value(sampling_freq)
+
+    if tf.is_tensor(audio):
+        audio = tensor_to_nparray(audio)
+    
+    return ipd.Audio(audio, rate=sampling_freq)
+
+
+def resize_spectrogram(stft_mag, stft_phase, input_width, input_height, output_width, output_height, channels):
+    stft_mag.set_shape([input_width, input_height, channels])
+    
+    stft_mag_resized = tf.image.resize(stft_mag, [output_width, output_height], antialias=True)
+    
+    return stft_mag_resized, stft_phase
+
+
+def normalize_spectrogram(stft_mag, stft_phase, top_db):
+    stft_mag_normalized = stft_mag / top_db
+    return stft_mag_normalized, stft_phase
+
+
+def denormalize_spectrogram(stft_mag, stft_phase, top_db):
+    stft_mag_denormalized = stft_mag * top_db
+    return stft_mag_denormalized, stft_phase
+
+def preprocess(file_path, sampling_freq_original, resampling_freq, max_dur, n_fft, hop_length, win_length, window,
+               input_width, input_height, rescale_width, rescale_height, channels, top_db, verbose=False):
+    
+    # Load and downsample
+    audio, sampling_freq = load_mono_wav(file_path, sampling_freq_original, resampling_freq, verbose)
+
+    audio = pad_trunc_audio(audio, sampling_freq, max_dur)
+    
+    stft_mag, stft_phase = get_stft_log_magnitude(audio,
+                                                  n_fft,
+                                                  hop_length,
+                                                  win_length,
+                                                  window,
+                                                  sampling_freq,
+                                                  verbose,
+                                               )
+    
+    stft_mag, stft_phase = resize_spectrogram(stft_mag,
+                                              stft_phase,
+                                              input_width,
+                                              input_height,
+                                              rescale_width,
+                                              rescale_height,
+                                              channels
+                                             )
+    
+    stft_mag, stft_phase = normalize_spectrogram(stft_mag, stft_phase, top_db)
+        
+    if verbose == True:
+        print(f'Dimensiones originales del espectrograma: {stft_phase.shape}')
+        print(f'Dimensiones de salida del espectrograma: {stft_mag.shape}')
+    
+    return stft_mag, stft_phase
+
+
+def postprocess(stft_mag, stft_phase, input_width=RESCALE_WIDTH, input_height=RESCALE_HEIGHT, rescale_width=INPUT_WIDTH,
+                rescale_height=INPUT_HEIGHT,channels=CHANNELS,top_db=TOP_DB):
+
+    stft_mag, stft_phase = resize_spectrogram(stft_mag,
+                                              stft_phase,
+                                              input_width,
+                                              input_height,
+                                              rescale_width,
+                                              rescale_height,
+                                              channels
+                                             )
+    
+    stft_mag, stft_phase = denormalize_spectrogram(stft_mag, stft_phase, top_db)
+        
+    return stft_mag, stft_phase
