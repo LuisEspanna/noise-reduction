@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import librosa as lb
 import matplotlib.pyplot as plt
+from librosa.display import specshow
+from tensorflow.python.keras import backend
 
 # Estandarización de duración
 MAX_DUR = 6
@@ -175,3 +177,141 @@ def plot_time_audio(audio, fs, width=13, height=4, title='Grafica del audio en e
         fmt = 'png'
         file_name = f'{title}.{fmt}'
         plt.savefig(file_name, bbox_inches='tight', pad_inches = 0, dpi=300)
+
+
+def plot_spectrogram(senal, sampling_freq, hop_length, width=5, height=5, title='Espectrograma', y_axis=None, cmap='inferno', save_plot=False):
+    '''
+    Esta función grafica el espectrograma de la señal de audio.
+    
+    Parámetros:
+    - senal: Señal de audio a graficar.
+    - sampling_freq: Frecuencia de muestreo del audio.
+    - hop_length: Nro. muestras que se va a mover la ventana en cada desplazamiento (hop: salto)
+    - width: Ancho de la grafica.
+    - height: Altura de la grafica.
+    - title: Titulo de la Figura.
+    - cmap: Colores del mapa de calor de la Figura.
+    - save_plot: Guardar Figura.
+    Returns:
+    - N/A
+    '''
+    if tf.is_tensor(senal):
+        senal = tf.squeeze(senal)
+        senal = tensor_to_nparray(senal)
+    else:
+        senal = np.squeeze(senal)
+        
+    # Plotear Figura
+    fig, ax = plt.subplots(1, 1, figsize=(width, height))
+    fig.patch.set_facecolor('white')
+    specshow(senal, y_axis=y_axis, fmin=0, fmax=sampling_freq/2, x_axis='time', sr=sampling_freq, hop_length=hop_length, cmap=cmap)
+    ax.set_title(title)
+    ax.set_xlabel('Tiempo [s]')
+    if y_axis != None:
+        ax.set_ylabel('Frecuencia [Hz]')
+    plt.colorbar(format='%+2.0f dB')
+    plt.tight_layout()
+    
+    # Guardar Figura
+    if save_plot == True:
+        name = title
+        fmt = 'png'
+        file_name = f'{title}.{fmt}'
+        plt.savefig(file_name, bbox_inches='tight', pad_inches = 0, dpi=300)
+
+
+
+def plot_3spectrogram(clean, noisy, pred, sampling_freq, hop_length, width=5, height=5, y_axis=None, cmap='inferno', save_plot=False):
+    '''
+    Esta función grafica el espectrograma de la señal de audio.
+    
+    Parámetros:
+    - 
+    Returns:
+    - N/A
+    '''
+    if tf.is_tensor(clean):
+        clean = tf.squeeze(clean)
+        clean = tensor_to_nparray(clean)
+    else:
+        clean = np.squeeze(clean)
+        
+    if tf.is_tensor(noisy):
+        noisy = tf.squeeze(noisy)
+        noisy = tensor_to_nparray(noisy)
+    else:
+        noisy = np.squeeze(noisy)
+        
+    if tf.is_tensor(pred):
+        pred = tf.squeeze(pred)
+        pred = tensor_to_nparray(pred)
+    else:
+        pred = np.squeeze(pred)
+        
+    # Plotear Figura
+    fig, ax = plt.subplots(1, 3, figsize=(width, height))
+    fig.patch.set_facecolor('white')
+    
+    specshow(noisy, y_axis=y_axis, fmin=0, fmax=sampling_freq/2, x_axis='time', sr=sampling_freq, hop_length=hop_length, cmap=cmap, ax=ax[0])
+    ax[0].set_title('Audio con ruido')
+    ax[0].set_xlabel('Tiempo [s]')
+    if y_axis != None:
+        ax[0].set_ylabel('Frecuencia [Hz]')
+        
+    specshow(pred, y_axis=y_axis, fmin=0, fmax=sampling_freq/2, x_axis='time', sr=sampling_freq, hop_length=hop_length, cmap=cmap, ax=ax[1])
+    ax[1].set_title('Predicción de audio optimizado')
+    ax[1].set_xlabel('Tiempo [s]')
+    ax[1].get_yaxis().set_visible(False)
+    if y_axis != None:
+        ax[1].set_ylabel('Frecuencia [Hz]')        
+        
+    im = specshow(clean, y_axis=y_axis, fmin=0, fmax=sampling_freq/2, x_axis='time', sr=sampling_freq, hop_length=hop_length, cmap=cmap, ax=ax[2])
+    ax[2].set_title('Audio limpio')
+    ax[2].set_xlabel('Tiempo [s]')
+    ax[2].get_yaxis().set_visible(False)
+    if y_axis != None:
+        ax[2].set_ylabel('Frecuencia [Hz]')   
+
+    fig.colorbar(im, ax=ax[2], format='%+2.0f dB')
+    plt.tight_layout()
+    
+    # Guardar Figura
+    if save_plot == True:
+        title = 'Plot_3spectrogram graph'
+        name = title
+        fmt = 'png'
+        file_name = f'{title}.{fmt}'
+        plt.savefig(file_name, bbox_inches='tight', pad_inches = 0, dpi=300)
+
+
+def plot_spectrogram_plt(senal, width=5, height=5, show_axis=True, title='Espectrograma.'):
+    '''
+    Esta función grafica el espectrograma de la señal de audio en escala de grises.
+    
+    Inputs:
+    - senal: Señal de audio a graficar.
+    - fs: Frecuencia de muestreo del audio.
+    - hop_length: Nro. muestras que se va a mover la ventana en cada desplazamiento (hop: salto)
+    - width: Ancho de la grafica.
+    - height: ALtura de la grafica.
+    - show_axis: Mostrar información en los ejes de la grafica.
+    Outputs:
+    - N/A
+    '''    
+    fig, ax = plt.subplots(1, 1, figsize=(width, height))
+    plt.imshow(senal, cmap='inferno', aspect='auto')
+    ax.invert_yaxis()
+    if show_axis == True:
+        fig.patch.set_facecolor('white')
+        ax.set_title(title)
+        ax.set_xlabel('Ventanas')
+        ax.set_ylabel('Divisiones en Frecuencia')
+        plt.colorbar(format='%+2.0f dB')
+        plt.tight_layout()
+    else:
+        plt.axis("off")   # turns off axes
+        plt.axis("tight")  # gets rid of white border
+
+
+def rmse(y_true, y_pred):
+    return backend.sqrt(backend.mean(backend.square(y_pred - y_true), axis=-1))
