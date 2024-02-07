@@ -9,6 +9,7 @@ import IPython.display as ipd
 import random
 from tensorflow.python.keras.layers import Input, Conv2D, LeakyReLU, MaxPooling2D, Dropout, concatenate, UpSampling2D, Conv2DTranspose
 from tensorflow.python.keras.models import Model
+from keras.callbacks import ModelCheckpoint, EarlyStopping, CSVLogger
 
 
 BatchNormalization = tf.nn.batch_normalization
@@ -872,3 +873,38 @@ def UNETmodel(input_size, n_filters, kernel_size, activation_layer, output_activ
                   metrics=['mae','mse'])
 
     return model
+
+
+def train_model(model, train, val, epochs, min_delta, patience, shuffle, verbose):
+
+    early_stop = EarlyStopping(monitor='val_loss', # Metrica a monitorear.
+                               min_delta = min_delta, # Cambio minimo considerado como mejora
+                               patience = patience, # Número de épocas sin mejora tras las cuales se detendrá el entrenamiento.
+                               restore_best_weights = True, # Restablece los pesos de la época con el mejor valor de 'val_loss'.
+                               mode = 'auto',
+                               verbose = True, # Debugging
+                              )
+    
+    checkpoint_path = 'saved_models/epoch_{epoch:02d}-valloss_{val_loss:.9f}.hdf5'
+    checkpoint = ModelCheckpoint(checkpoint_path,
+                                 monitor='val_loss',
+                                 save_best_only=True,
+                                 mode='min',
+                                 verbose=1)
+    
+    log_path = 'logs.csv'
+    log_csv = CSVLogger(log_path,
+                        separator=',',
+                        append=False)
+
+    callbacks_list = [early_stop, checkpoint, log_csv]
+    
+    history = model.fit(train, # Set de Entrenamiento
+                        validation_data = val, # Set de Validación
+                        epochs = epochs, # Número de epocas
+                        callbacks = callbacks_list,
+                        shuffle = shuffle, # Mantener o alterar la secuencia de los datos
+                        verbose = verbose, # Debugging
+                       )
+    
+    return history, early_stop
