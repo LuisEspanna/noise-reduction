@@ -6,6 +6,11 @@ from librosa.display import specshow
 from tensorflow.python.keras import backend
 import tensorflow_io as tfio
 import IPython.display as ipd
+import random
+from tensorflow.python.keras.layers import Input, Conv2D, LeakyReLU, MaxPooling2D, Dropout, concatenate, UpSampling2D, Conv2DTranspose
+
+
+BatchNormalization = tf.nn.batch_normalization
 
 TOP_DB = 80.0
 # Estandarización de duración
@@ -26,6 +31,11 @@ RESCALE_WIDTH = int(2**8) # 2**8=256. 2**9=512
 RESCALE_HEIGHT = RESCALE_WIDTH
 CHANNELS = 1
 TF_ENABLE_ONEDNN_OPTS=0
+
+
+random.seed(7)
+np.random.seed(7)
+tf.random.set_seed(7)
 
 
 def pad_trunc_audio(audio, sampling_freq, max_dur):
@@ -674,3 +684,124 @@ def postprocess(stft_mag, stft_phase, input_width=RESCALE_WIDTH, input_height=RE
     stft_mag, stft_phase = denormalize_spectrogram(stft_mag, stft_phase, top_db)
         
     return stft_mag, stft_phase
+
+def UNETencoder(inputs, n_filters, kernel_size, activation_layer, kernel_init, batch_normalization, dropout, max_pooling):
+    """
+    Esta función utiliza múltiples capas de convolución, max pool, activación relu para crear una arquitectura de aprendizaje.
+    Una inicialización adecuada evita el problema de la explosión y el desvanecimiento de los gradientes.
+    Se puede añadir un dropout para regularizar y evitar el sobreajuste. 
+    Parámetros:
+    - inputs: Entrada al encoder
+    - n_filters: Número de Filtros
+    - kernel_size: Tamaño del Kernel
+    - activation_layer: Capa de Activación
+    - kernel_init: Inicialización de Kernel
+    - dropout: Dropout
+    - max_pooling: Opción booleana para realizar max pooling
+    Returns:
+    - next_layer: Valores de activación para la siguiente capa.
+    - skip_connection: Conexión de salto que se utilizará en el decodificador.
+    """
+    if activation_layer == 'leakyrelu':
+        activation = None
+    else:
+        activation = activation_layer
+    
+    # Primera Capa de Convolución
+    conv = Conv2D(n_filters, 
+                  kernel_size,
+                  activation=activation,
+                  padding='same', # Para asegurar que el tamaño de la imagen no disminuya.
+                  kernel_initializer=kernel_init)(inputs)
+    
+    if activation_layer == 'leakyrelu':
+        conv = LeakyReLU()(conv)
+    
+    # Segunda Capa de Convolución
+    conv = Conv2D(n_filters, 
+                  kernel_size,
+                  activation=activation,
+                  padding='same', # Para asegurar que el tamaño de la imagen no disminuya.
+                  kernel_initializer=kernel_init)(conv)
+    
+    if activation_layer == 'leakyrelu':
+        conv = LeakyReLU()(conv)
+    
+    # Normalización del lote. Se normalizará la salida de la última capa basándose en la media y la desviación estándar del lote
+    if batch_normalization == True:
+        conv = BatchNormalization()(conv, training=False)
+
+    # En caso de sobreajuste, el dropout regularizará la pérdida y el cálculo del gradiente, para reducir la influencia de los pesos en la salida
+    if dropout > 0:     
+        conv = Dropout(dropout)(conv)
+
+    # El pooling reduce el tamaño de la imagen manteniendo el mismo número de canales
+    # El pooling se ha mantenido como opcional ya que la última capa del codificador no utiliza el pooling.
+    # Se utiliza un stride de 2 para recorrer la imagen de entrada, y considera el máximo del slice de entrada para el cálculo de la salida.
+    if max_pooling:
+        next_layer = MaxPooling2D(pool_size = (2,2))(conv)    
+    else:
+        next_layer = conv
+
+    # Las Skip Conecction se introducirán en el decoder para evitar la pérdida de información durante las convoluciones transpuestas.
+    skip_connection = conv
+    
+    return next_layer, skip_connection
+
+
+def UNETdecoder(prev_layer_input, skip_layer_input, n_filters, kernel_size, activation_layer, kernel_init, dropout):
+    """
+    El bloque decodificador utiliza primero la convolución de transposición para escalar la imagen a un tamaño mayor
+    y luego fusiona el resultado con los resultados de la capa de salto del bloque codificador
+    La adición de 2 convoluciones con el mismo relleno ayuda a aumentar la profundidad de la red para mejorar las predicciones
+    La función devuelve la salida de la capa decodificada
+    Parámetros:
+    - prev_layer_input: 
+    - skip_layer_input:
+    - n_filters: Número de Filtros
+    - kernel_size: Tamaño del Kernel
+    - activation_layer: Capa de Activación
+    - kernel_init: Inicialización de Kernel
+    Returns:
+    - conv: 
+    """
+    
+    if activation_layer == 'leakyrelu':
+        activation = None
+    else:
+        activation = activation_layer
+        
+    # Capa de convolución transpuesta para aumentar el tamaño de la imagen
+    up = Conv2DTranspose(n_filters,
+                         (kernel_size, kernel_size),
+                         strides=(2,2),
+                         padding='same')(prev_layer_input)
+
+    # Se combina la skip connection del bloque anterior para evitar la pérdida de información
+    merge = concatenate([up, skip_layer_input], axis=3)
+    
+    # Primera Capa de Convolución
+    conv = Conv2D(n_filters,
+                  kernel_size,
+                  activation=activation,
+                  padding='same', # Para asegurar que el tamaño de la imagen no disminuya.
+                  kernel_initializer=kernel_init)(merge)
+
+    if activation_layer == 'leakyrelu':
+        conv = LeakyReLU()(conv)
+        
+    # Segunda Capa de Convolución
+    conv = Conv2D(n_filters,
+                  kernel_size,
+                  activation=activation,
+                  padding='same', # Para asegurar que el tamaño de la imagen no disminuya.
+                  kernel_initializer=kernel_init)(conv)
+    
+    if activation_layer == 'leakyrelu':
+        conv = LeakyReLU()(conv)
+        
+    # En caso de sobreajuste, el dropout regularizará la pérdida y el cálculo del gradiente, para reducir la influencia de los pesos en la salida
+    if dropout > 0:     
+        conv = Dropout(dropout)(conv)
+        
+    return conv
