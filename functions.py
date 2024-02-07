@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+import numpy as np
 
 def pad_trunc_audio(audio, sampling_freq, max_dur):
     '''
@@ -46,3 +46,21 @@ def pad_trunc_audio(audio, sampling_freq, max_dur):
         audio_proc = audio
 
     return audio_proc
+
+
+def tensor_to_nparray(tensor):
+    '''
+    Esta función convierte un objeto tipo tensor de Tensorflow en un objeto tipo array de NumPy.
+    Es util para graficar el audio y calcular la STFT mediante la biblioteca Librosa.
+    
+    Input:
+    - tensor: Objeto tipo tensor
+    Output:
+    - np_array: Objeto tipo array de numpy
+    '''
+    # Se convierte el objeto tipo Tensor a un array de numpy
+    np_array = tensor.numpy()
+    # Se disminuye la dimensión del vector
+    np_array = np.squeeze(np_array)
+    
+    return np_array
