@@ -908,3 +908,7 @@ def train_model(model, train, val, epochs, min_delta, patience, shuffle, verbose
                        )
     
     return history, early_stop
+
+def load_model(filts_test=16):
+    unet = tf.keras.models.load_model(f'models/{RESCALE_WIDTH}px_{filts_test}filts.h5')
+    return unet
