@@ -3,14 +3,16 @@ import numpy as np
 import librosa as lb
 import matplotlib.pyplot as plt
 from librosa.display import specshow
-from tensorflow.python.keras import backend
+from tensorflow.keras import backend
 import tensorflow_io as tfio
 import IPython.display as ipd
 import random
-from tensorflow.python.keras.layers import Input, Conv2D, LeakyReLU, MaxPooling2D, Dropout, concatenate, UpSampling2D, Conv2DTranspose
-from tensorflow.python.keras.models import Model
+from tensorflow.keras.layers import Input, Conv2D, LeakyReLU, MaxPooling2D, Dropout, concatenate, UpSampling2D, BatchNormalization, Conv2DTranspose
+from tensorflow.keras.models import Model
 from keras.callbacks import ModelCheckpoint, EarlyStopping, CSVLogger
-
+import os
+from pydub import AudioSegment
+from werkzeug.utils import secure_filename
 
 BatchNormalization = tf.nn.batch_normalization
 
@@ -33,6 +35,9 @@ RESCALE_WIDTH = int(2**8) # 2**8=256. 2**9=512
 RESCALE_HEIGHT = RESCALE_WIDTH
 CHANNELS = 1
 TF_ENABLE_ONEDNN_OPTS=0
+WIN_LENGTH = N_FFT
+WINDOW = 'hann'
+PATH = 'instance/files/audios/'
 
 
 random.seed(7)
@@ -912,3 +917,43 @@ def train_model(model, train, val, epochs, min_delta, patience, shuffle, verbose
 def load_model(filts_test=16):
     unet = tf.keras.models.load_model(f'models/{RESCALE_WIDTH}px_{filts_test}filts.h5')
     return unet
+
+
+def load_audio(filename):
+    if os.path.exists(PATH + secure_filename(filename)):
+        src = PATH + filename
+        dst = PATH + filename + '.wav'
+                                                            
+        sound = AudioSegment.from_mp3(src)
+        sound.export(dst, format="wav")
+
+        audio_data = tf.io.read_file(dst)
+        audio, sample_rate = tf.audio.decode_wav(audio_data)
+        stfts = tf.signal.stft(audio, frame_length=1024,\
+                        frame_step=256,\
+                        fft_length=1024)
+        spectrograms = tf.abs(stfts)
+
+        transpose = tf.transpose(audio)
+
+        return spectrograms, transpose, sample_rate
+    else:
+        print("The file does not exist")
+
+
+def audio_process(filename):
+    load_audio(filename)
+
+    if os.path.exists(PATH + secure_filename(filename)):
+        os.remove(PATH + secure_filename(filename))
+    else:
+        print("The file does not exist")
+
+
+
+def save_audio_plot(audio, filename):
+    transpose = tf.transpose(audio)
+    plt.plot(transpose.numpy().T)
+    plt.xlabel('Sample')
+    plt.ylabel('Value')
+    plt.savefig(PATH + filename, bbox_inches='tight')

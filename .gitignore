@@ -6,3 +6,4 @@ instances/*
 __pycache__/
 saved_models/
 models/
+instance/*
